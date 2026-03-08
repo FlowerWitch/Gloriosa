@@ -33,18 +33,21 @@ def scan_page(url):
         print(f" [SCAN_PAGE] 开始处理: {url}")
 
     html_pc = crawler.fetch(url, crawler.HEADERS_PC)
+    
+    # 如果 PC 请求失败（超时或空内容），直接返回失败标记
+    if not html_pc:
+        if VERBOSE:
+            print(f" [SKIP] {url} PC请求失败，跳过该URL")
+        return "FETCH_FAILED", None, None
+    
+    # PC 成功后再请求 Mobile
     html_mobile = crawler.fetch(url, crawler.HEADERS_MOBILE)
 
     if VERBOSE:
         print(f" [SCAN_PAGE] {url} - PC len: {len(html_pc or '')}, Mobile len: {len(html_mobile or '')}")
 
-    if not html_pc and not html_mobile:
-        return None, None, None
-
     # PC 检测
-    pc_score, pc_findings, pc_keyword_hit = 0, [], False
-    if html_pc:
-        pc_score, pc_findings, pc_keyword_hit = detector.detect(url, html_pc)
+    pc_score, pc_findings, pc_keyword_hit = detector.detect(url, html_pc)
 
     # Mobile 检测
     mobile_score, mobile_findings, mobile_keyword_hit = 0, [], False
@@ -52,14 +55,14 @@ def scan_page(url):
         mobile_score, mobile_findings, mobile_keyword_hit = detector.detect(url, html_mobile)
 
     # UA 差异加分
-    if html_pc and html_mobile and html_pc != html_mobile:
+    if html_mobile and html_pc != html_mobile:
         pc_score += 5
         pc_findings.append(("Mobile UA差异", "PC与Mobile返回不同"))
         mobile_score += 5
         mobile_findings.append(("Mobile UA差异", "PC与Mobile返回不同"))
 
     # PC 异常短 → fallback 到 Mobile
-    if html_pc and len(html_pc) < 500 and html_mobile and len(html_mobile) > 1000:
+    if len(html_pc) < 500 and html_mobile and len(html_mobile) > 1000:
         if VERBOSE:
             print(f"  [FALLBACK] PC 内容异常短 ({len(html_pc)})，使用 Mobile 结果")
         pc_score = mobile_score
@@ -86,6 +89,11 @@ def scan_site(url, max_pages=30):
     queue.append(url)
 
     main_result, main_html, main_mobile_html = scan_page(url)
+
+    # 如果主页面获取失败，直接跳过整个站点
+    if main_result == "FETCH_FAILED":
+        print(f" [!] {url} 主页面请求失败，跳过该站点")
+        return None
 
     results = []
 
@@ -135,6 +143,11 @@ def scan_site(url, max_pages=30):
 
             for f in as_completed(futures):
                 page_result = f.result()
+                
+                # 跳过获取失败的页面
+                if page_result == "FETCH_FAILED":
+                    continue
+                    
                 if not page_result:
                     continue
 
@@ -154,7 +167,7 @@ def scan_site(url, max_pages=30):
                         results.append(page_info)
                 except Exception as e:
                     if VERBOSE:
-                        print(f"  [ERROR] 处理 {u} 时出错: {str(e)}")
+                        print(f"  [ERROR] 处理页面时出错: {str(e)}")
                     continue
 
             # 提取链接
@@ -205,6 +218,13 @@ def main():
             break
         print("Scanning", t)
         res = scan_site(t)
+        
+        # 处理跳过的情况
+        if res is None:
+            report += f"## {t}\n\n"
+            report += "站点请求失败，已跳过\n\n"
+            continue
+            
         report += f"## {t}\n\n"
         if not res:
             report += "未发现暗链\n\n"
