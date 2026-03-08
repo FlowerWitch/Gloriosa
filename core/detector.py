@@ -10,16 +10,20 @@ def detect(url, html):
     keyword_hit = False
 
     # -------------------------
-    # 关键词顶格检测
+    # 关键词顶格检测（关键词 + JS特征）
     # -------------------------
     m = rules.KEYWORD_REGEX.search(html)
-    if m:
+    js_m = rules.JS_PATTERN.search(html)  # 添加：检测 JS 劫持特征
+    if m or js_m:  # 修改：任一命中都加分
         score += 15
         keyword_hit = True
-        findings.append(("🚨关键词命中 (html)", m.group()))
+        if m:
+            findings.append(("🚨关键词命中 (html)", m.group(0)))
+        if js_m:
+            findings.append(("🚨JS劫持特征", js_m.group(0)[:400]))
 
     # 新增：meta title / description / keywords 检测（常见藏暗链的地方）
-    soup = BeautifulSoup(html, "html.parser")  # 移到这里，确保 soup 已定义
+    soup = BeautifulSoup(html, "html.parser")
     title = soup.title.string if soup.title else ""
     if title and rules.KEYWORD_REGEX.search(title):
         score += 8
@@ -67,7 +71,7 @@ def detect(url, html):
         findings.append(("meta refresh", html[:200]))
 
     # -------------------------
-    # JS 检测
+    # JS 检测（Base64/CharCode 解码）
     # -------------------------
 
     for script in soup.find_all("script"):

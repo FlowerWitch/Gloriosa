@@ -2,7 +2,7 @@ import argparse
 import signal
 import warnings
 import urllib3
-import time  # 用于重试延迟（可选）
+import time
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from bs4 import XMLParsedAsHTMLWarning
@@ -13,7 +13,7 @@ urllib3.disable_warnings()
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 
 STOP_SCAN = False
-VERBOSE = False  # 默认关闭详细输出
+VERBOSE = False
 
 
 def signal_handler(sig, frame):
@@ -67,7 +67,7 @@ def scan_page(url):
             print(f"  [FALLBACK] PC 内容异常短 ({len(html_pc)})，使用 Mobile 结果")
         pc_score = mobile_score
         pc_findings = mobile_findings
-        html_pc = html_mobile  # 用于提取链接
+        html_pc = html_mobile
 
     return (
         (url, pc_score, pc_findings, mobile_score, mobile_findings),
@@ -99,8 +99,10 @@ def scan_site(url, max_pages=30):
 
     if main_result:
         page_url, pc_score, pc_findings, mob_score, mob_findings = main_result
-        if pc_score >= 4 or mob_score >= 4:
-            print(f"\033[91m[RISK] {page_url}   PC: {pc_score} | Mobile: {mob_score}\033[0m")
+        # 主页面有评分才加入结果
+        if pc_score > 0 or mob_score > 0:
+            if pc_score >= 4 or mob_score >= 4:
+                print(f"\033[91m[RISK] {page_url}   PC: {pc_score} | Mobile: {mob_score}\033[0m")
             results.append(main_result)
 
     # 提取链接
@@ -135,7 +137,7 @@ def scan_site(url, max_pages=30):
                 if u in visited:
                     continue
                 visited.add(u)
-                print(f" -> scanning {u}")  # 保留这个
+                print(f" -> scanning {u}")
                 batch.append(u)
 
             futures = [executor.submit(scan_page, u) for u in batch]
@@ -162,8 +164,10 @@ def scan_site(url, max_pages=30):
                     pc_score = page_info[1]
                     mob_score = page_info[3]
 
-                    if pc_score >= 4 or mob_score >= 4:
-                        print(f"\033[91m[RISK] {url_in_result}   PC: {pc_score} | Mobile: {mob_score}\033[0m")
+                    # 有评分的页面才加入结果（无论是否达到风险阈值）
+                    if pc_score > 0 or mob_score > 0:
+                        if pc_score >= 4 or mob_score >= 4:
+                            print(f"\033[91m[RISK] {url_in_result}   PC: {pc_score} | Mobile: {mob_score}\033[0m")
                         results.append(page_info)
                 except Exception as e:
                     if VERBOSE:
@@ -194,11 +198,12 @@ def main():
     parser.add_argument("-i", required=True, help="输入目标文件")
     parser.add_argument("-o", required=True, help="输出报告文件")
     parser.add_argument("-x", "--proxy", help="代理地址，例如 http://127.0.0.1:8080")
-    parser.add_argument("-I", "--info", action="store_true", help="启用详细输出模式（显示所有扫描页面处理信息）")
+    parser.add_argument("-I", "--info", action="store_true", help="启用详细输出模式")
 
     args = parser.parse_args()
 
     VERBOSE = args.info
+    crawler.VERBOSE = VERBOSE
 
     if args.proxy:
         proxies = {
@@ -208,10 +213,11 @@ def main():
         crawler.session.proxies.update(proxies)
         print(f"[*] 使用代理: {args.proxy}")
     else:
-        print("[*] 未指定代理，直接请求")
+        print("[*] No proxy")
 
     targets = open(args.i).read().splitlines()
-    report = "# 暗链扫描报告\n\n"
+    
+    all_results = []
 
     for t in targets:
         if STOP_SCAN:
@@ -219,18 +225,18 @@ def main():
         print("Scanning", t)
         res = scan_site(t)
         
-        # 处理跳过的情况
-        if res is None:
-            report += f"## {t}\n\n"
-            report += "站点请求失败，已跳过\n\n"
-            continue
-            
-        report += f"## {t}\n\n"
-        if not res:
-            report += "未发现暗链\n\n"
-            continue
+        if res:
+            all_results.append((t, res))
 
-        for page_info in res:
+    # 只有存在有评分的结果时才write
+    if not all_results:
+        return
+
+    report = "# 扫描报告\n\n"
+    
+    for target, pages in all_results:
+        report += f"## {target}\n\n"
+        for page_info in pages:
             url, pc_score, pc_findings, mob_score, mob_findings = page_info
             report += f"### 页面 {url}\n\n"
             report += f"**PC 版本** 风险评分: {pc_score}\n"

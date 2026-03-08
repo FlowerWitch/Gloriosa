@@ -22,7 +22,7 @@ HEADERS_MOBILE = {
 
 def fetch(url, headers):
     try:
-        r = session.get(url, headers=headers, timeout=2, verify=False)
+        r = session.get(url, headers=headers, timeout=4, verify=False)
         if r.status_code != 200:
             return ""
         ct = r.headers.get("Content-Type", "").lower()
